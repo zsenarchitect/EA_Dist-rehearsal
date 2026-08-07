@@ -107,4 +107,13 @@ disabled until the EnneadTab bank is repaired and a decay rule has actually run.
   *unbuildable* today rather than built-and-filtered, so they cannot leak.
 - Phase 5: `chart=` on `NOTIFICATION.messenger` and the NotificationHost renderer.
   Requires rebuilding `NotificationHost.exe`.
-- Phase 6: the bank / economy / leaderboard.
+- ~~Phase 6: the bank / economy / leaderboard.~~ **SHIPPED 2026-08-06** (PR #95) — the
+  sync-time session card plus a real EnneadTab-Bank client. But it has never run: no
+  live Revit/Rhino test, and every Bank call 401s until `DESKTOP_TOKEN_SECRET` is
+  provisioned. Read `docs/plans/2026-08-07-session-card-bank-desktop-handoff.md`
+  **before** touching it or assuming the economy works.
+
+`coins_at_risk` (see `recap_claims.LOSS_AVERSION_TYPES`) still has no builder. The
+condition on it has moved rather than cleared: the bank now exists, so what it waits on
+is a live ledger with a decay rule that has actually run — a threatened loss must be one
+the code enforces. Handoff §8 tracks that.
