@@ -112,35 +112,55 @@ def build_catalog(apps=(REVIT, RHINO)):
 
 # ----------------------------------------------------------------------- join
 
-def join_usage(catalog, runs_by_tool, basenames_by_tool=None):
+def _resolve_script(catalog, key, basename):
+    """A normalized log key -> catalog script_path, via alias then basename."""
+    script_path = catalog["by_alias"].get(key)
+    if script_path is None and basename:
+        script_path = catalog["by_basename"].get(basename)
+    return script_path
+
+
+def join_usage(catalog, runs_by_tool, basenames_by_tool=None, seconds_by_tool=None):
     """Map normalized log keys onto catalog script paths.
 
-    Returns {"runs": {script_path: count}, "unknown": {key: count},
-             "coverage": float}. Coverage below ~0.9 means the join has rotted
-    (usually a knowledge file lagging the log by a release) and comparative
-    claims should be suppressed rather than computed on a bad denominator.
+    Returns {"runs": {script_path: count},
+             "seconds_by_script": {script_path: seconds},
+             "unknown": {key: count}, "coverage": float}. Coverage below ~0.9
+    means the join has rotted (usually a knowledge file lagging the log by a
+    release) and comparative claims should be suppressed rather than computed on
+    a bad denominator.
+
+    `seconds_by_tool` (from recap_stats, keyed by NORMALIZED LOG ALIAS) is folded
+    into script space here -- summing across a multi-alias tool's aliases the same
+    way run counts are -- so recap_savings can pair runtime against a
+    script_path-keyed baseline. Without this fold the two live in different key
+    spaces and every runtime lookup silently misses.
     """
     basenames_by_tool = basenames_by_tool or {}
     runs = {}
+    seconds_by_script = {}
     unknown = {}
     matched = 0
     total = 0
 
     for key, count in (runs_by_tool or {}).items():
         total += count
-        script_path = catalog["by_alias"].get(key)
-        if script_path is None:
-            basename = basenames_by_tool.get(key)
-            if basename:
-                script_path = catalog["by_basename"].get(basename)
+        script_path = _resolve_script(catalog, key, basenames_by_tool.get(key))
         if script_path is None:
             unknown[key] = unknown.get(key, 0) + count
             continue
         runs[script_path] = runs.get(script_path, 0) + count
         matched += count
 
+    for key, seconds in (seconds_by_tool or {}).items():
+        script_path = _resolve_script(catalog, key, basenames_by_tool.get(key))
+        if script_path is None:
+            continue
+        seconds_by_script[script_path] = seconds_by_script.get(script_path, 0.0) + seconds
+
     coverage = (float(matched) / total) if total else 1.0
-    return {"runs": runs, "unknown": unknown, "coverage": coverage}
+    return {"runs": runs, "seconds_by_script": seconds_by_script,
+            "unknown": unknown, "coverage": coverage}
 
 
 # ------------------------------------------------------------ recommendations

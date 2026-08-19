@@ -22,6 +22,16 @@ def register_rhino_tools(mcp: McpServer, adapter) -> None:
         handler=list_layers,
     )
 
+    def list_blocks() -> list:
+        """List block definitions in the active Rhino document."""
+        return adapter.list_blocks()
+
+    mcp.tool(
+        name="list_blocks",
+        description="List block definitions in the active Rhino document, with per-block instance counts.",
+        handler=list_blocks,
+    )
+
     def set_layer_state(
         layer_name: str = "",
         visible: str = "",

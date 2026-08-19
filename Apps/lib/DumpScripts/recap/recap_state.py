@@ -32,6 +32,7 @@ def _empty_state():
         "claim_history": [],      # [{month, type, tool}], newest last
         "recommend_history": {},  # tool_key -> times recommended
         "first_seen": {},         # tool_key -> "YYYY-MM-DD"
+        "asked_baseline": {},     # script_path -> "YYYY-MM-DD" the by-hand-time ask fired
         "streak": {},
     }
 
@@ -53,7 +54,7 @@ def load(user_name=None):
     for key in ("claim_history",):
         if not isinstance(base.get(key), list):
             base[key] = []
-    for key in ("recommend_history", "first_seen", "streak"):
+    for key in ("recommend_history", "first_seen", "asked_baseline", "streak"):
         if not isinstance(base.get(key), dict):
             base[key] = {}
     return base
@@ -116,6 +117,25 @@ def record_recommendations(state, tool_keys):
     for key in tool_keys:
         history[key] = int(history.get(key, 0)) + 1
     state["recommend_history"] = history
+    return state
+
+
+# ----------------------------------------------------- by-hand-time ask dedup
+
+def already_asked_baseline(state, script_path):
+    """True once the by-hand-time ask has fired for this tool for this user.
+
+    A tool is asked at most once per user, ever -- re-asking the same tool is
+    exactly the nag that makes the whole feature feel like a survey treadmill.
+    """
+    return script_path in (state.get("asked_baseline") or {})
+
+
+def record_baseline_asked(state, script_path, date_str):
+    """Stamp a tool as asked so it is never re-asked for this user."""
+    asked = state.get("asked_baseline") or {}
+    asked.setdefault(script_path, date_str)
+    state["asked_baseline"] = asked
     return state
 
 

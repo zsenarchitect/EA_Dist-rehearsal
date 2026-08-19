@@ -138,10 +138,10 @@ class RhinoAdapter(AppAdapter):
         """Return all named views in the active Rhino document."""
         return self._get("/views/").json()
 
-    def list_families(self, category: Optional[str] = None) -> List[dict]:
+    def list_blocks(self, category: Optional[str] = None) -> List[dict]:
         """Return block definitions, optionally filtered by *category*."""
         params = {"category": category} if category else None
-        return self._get("/block-definitions/", params=params).json()
+        return self._get("/blocks/", params=params).json()
 
     def set_layer_state(
         self,

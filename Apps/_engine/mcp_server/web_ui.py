@@ -1027,6 +1027,7 @@ const TOOL_CATEGORIES = {
   'Views': ['list_views', 'create_view', 'create_section', 'get_view_image'],
   'Sheets': ['create_sheet', 'place_view_on_sheet'],
   'Families': ['list_families'],
+  'Blocks': ['list_blocks'],
   'Levels': ['list_levels'],
   'Code': ['execute_code'],
   'EnneadTab': ['list_enneadtab_tools', 'run_enneadtab_tool', 'list_enneadtab_modules', 'search_enneadtab_source', 'read_enneadtab_file'],
@@ -1039,6 +1040,7 @@ const CATEGORY_ICONS = {
   'Views': '\u25C9',     // fisheye
   'Sheets': '\u25A1',    // white square
   'Families': '\u2302',  // house
+  'Blocks': '\u25A3',    // square with square
   'Levels': '\u2261',    // triple bar
   'Code': '\u276F',      // angle bracket
   'EnneadTab': '\u2726', // star

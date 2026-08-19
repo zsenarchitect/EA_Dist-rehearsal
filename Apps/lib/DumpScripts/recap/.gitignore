@@ -1,0 +1,5 @@
+# Runtime-fetched fleet baselines (recap_fleet_fetch writes this from the
+# InfraWatch median endpoint). Machine-local cache, never committed -- the
+# curated time_baselines.json seed IS tracked; this fleet overlay is not.
+fleet_time_baselines.json
+fleet_time_baselines.json.tmp

@@ -301,6 +301,16 @@ def build(raw_log, today, is_working_day=None):
     prev_month = window_metrics(records, prev_start, prev_end)
     week = window_metrics(records, week_start, week_end)
 
+    # Lifetime window: same shape as the month window (runs_by_tool,
+    # seconds_by_tool, basenames_by_tool) so the time-saved estimate reuses the
+    # identical join + baseline path for "since you started" as for the month.
+    # One extra pass over records already held in memory -- the producer runs
+    # off-thread under CPython, never on the Revit UI thread.
+    if records:
+        life = window_metrics(records, records[0][0].date(), records[-1][0].date())
+    else:
+        life = _blank_window(today, today)
+
     idle_working = working_days_since_last_run(records, today, is_working_day)
     streak = working_day_streak(records, today, is_working_day)
 
@@ -317,6 +327,7 @@ def build(raw_log, today, is_working_day=None):
         "month": month,
         "prev_month": prev_month,
         "week": week,
+        "lifetime": life,
         "mom_delta_by_tool": month_over_month(month, prev_month),
         "month_id": "{:04d}-{:02d}".format(month_start.year, month_start.month),
         "month_label": month_start.strftime("%B"),

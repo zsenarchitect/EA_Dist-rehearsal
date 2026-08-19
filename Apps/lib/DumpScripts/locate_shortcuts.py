@@ -36,21 +36,19 @@ SELF_LINK_FILENAME = "shortcut_self_link.txt"
 
 
 def get_report_folder() -> str:
-    """Resolve the shared reports folder at runtime (#2360).
-
-    The L: drive is being retired, so the destination is no longer hardcoded.
-    Prefers the EnneadTab library resolver; falls back to the EA_SHARED_ROOT
-    environment variable, then to the legacy L: path.
-    """
+    """Resolve the reports folder. The office L: drive is retired."""
     try:
         from EnneadTab import ENVIRONMENT
-        db_folder = ENVIRONMENT.DB_FOLDER
+        db_folder = ENVIRONMENT.DUMP_FOLDER
+        if not ENVIRONMENT.IS_OFFLINE_MODE:
+            db_folder = ENVIRONMENT.SHARED_DUMP_FOLDER
+        return os.path.join(db_folder, "_internal reports")
     except Exception:
+        eco = os.path.join(os.environ.get("USERPROFILE", ""), "Documents", "EnneadTab Ecosystem")
         shared_root = (os.environ.get("EA_SHARED_ROOT") or "").strip()
-        if not shared_root or shared_root.upper() == "OFFLINE":
-            shared_root = "L:\\4b_Design Technology"
-        db_folder = os.path.join(shared_root, "05_EnneadTab-DB")
-    return os.path.join(db_folder, "Shared Data Dump", "_internal reports")
+        if shared_root and shared_root.upper() != "OFFLINE" and not shared_root.upper().startswith("L:"):
+            return os.path.join(shared_root, "05_EnneadTab-DB", "Shared Data Dump", "_internal reports")
+        return os.path.join(eco, "Dump", "_internal reports")
 
 def get_shell():
     """Get or create a cached shell object."""

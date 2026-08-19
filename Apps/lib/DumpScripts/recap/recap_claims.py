@@ -46,6 +46,17 @@ MIN_RUNS_FOR_COMPARATIVE = 25
 MIN_TOOL_RUNS = 10
 COLD_START_RUNS = 20
 
+# time_saved is the module's first AUTHORED-magnitude claim (every other number
+# is measured from the log or suppressed). Because the multiplier is authored,
+# it carries gates the measured claims do not need: a floor on how many distinct
+# tools with a trustworthy (med+) baseline contribute, a ceiling on any single
+# tool's share of the total so one authored constant cannot become the headline,
+# and a materiality floor in hours.
+MIN_BASELINE_TOOLS = 5
+MIN_BASELINE_COVERAGE = 0.5
+MAX_SINGLE_TOOL_SHARE = 0.5
+MIN_SAVED_SECONDS = 3600.0
+
 _BASE_SCORE = {
     "ratio_vs_office": 1.00,
     "office_rank_1": 0.95,
@@ -54,6 +65,9 @@ _BASE_SCORE = {
     "streak_lost": 0.80,
     "self_growth": 0.70,
     "time_in_tools": 0.60,
+    # Authored magnitude -> scored just below the measured time_in_tools so a
+    # real, measured claim wins the headline over an estimated one on a tie.
+    "time_saved": 0.58,
     "blind_spot": 0.55,
     "breadth": 0.50,
     "cold_start": 0.20,
@@ -63,6 +77,10 @@ _MAGNITUDE_CAP = {
     "ratio_vs_office": 50.0,
     "self_growth": 5.0,
     "time_in_tools": 8.0,
+    # Monthly saved-hours saturate later than time_in_tools' 8h -- a busy month
+    # of batch tools can plausibly clear a working week. Sized for the month
+    # figure the claim scores on (not the far larger lifetime number).
+    "time_saved": 40.0,
     "breadth": 30.0,
     "streak_at_risk": 30.0,
     "streak_lost": 30.0,
@@ -209,6 +227,68 @@ def _build_time_in_tools(metrics, catalog, joined):
         "time_in_tools", fields,
         surface="One tool quietly ate {hours} hours of your {month}.",
         body="{tool} -- {hours} hours across {runs} runs, averaging {avg} each.",
+        tool=name,
+    )
+
+
+def _build_time_saved(metrics, catalog, joined):
+    """Estimated time the reader's automation saved them this month.
+
+    The ONLY claim whose magnitude is authored (a curated manual-effort baseline)
+    rather than measured. Every guard below exists to keep an authored number
+    from overstating: the same volume + join-quality floors the comparative
+    claims use, PLUS a distinct-tools floor and a single-tool-share ceiling so the
+    figure cannot rest on one hand-authored constant. The number consumed here is
+    already graded to med+ confidence (metrics["savings_claim"]).
+    """
+    savings = metrics.get("savings_claim")
+    if not savings:
+        return None
+
+    month = metrics["month"]
+    if month.get("total_runs", 0) < MIN_RUNS_FOR_COMPARATIVE:
+        return None
+    # A rotted catalog join understates real activity and would overstate the
+    # coverage denominator -- suppress rather than compute on it.
+    if joined.get("coverage", 1.0) < 0.9:
+        return None
+    if savings.get("baseline_coverage", 0.0) < MIN_BASELINE_COVERAGE:
+        return None
+    if savings.get("distinct_tools", 0) < MIN_BASELINE_TOOLS:
+        return None
+    if savings.get("seconds_saved", 0.0) < MIN_SAVED_SECONDS:
+        return None
+    if savings.get("max_share", 1.0) > MAX_SINGLE_TOOL_SHARE:
+        return None
+
+    contributors = savings.get("contributors") or []
+    if not contributors:
+        return None
+    top = contributors[0]
+    name = _display_name_by_script(top["script"], catalog)
+    if not name:
+        return None
+
+    fields = {
+        "band": _band_hours(savings["seconds_saved"]),
+        "month": metrics["month_label"],
+        "tools": savings["distinct_tools"],
+        "tool": name,
+        "tool_runs": top["runs"],
+        "assume": _readable_seconds(top["assumed_seconds"]),
+        "_confidence": 1.0,
+        "_magnitude": _magnitude(savings["seconds_saved"] / 3600.0, "time_saved"),
+    }
+    # Two-register: the surface discloses the estimated total but WITHHOLDS which
+    # tool drove it (the curiosity gap resolves on a tool, never on the number);
+    # the body names the tool and surfaces the per-run assumption so the estimate
+    # is auditable by the reader, not just in the dry run.
+    return Claim(
+        "time_saved", fields,
+        surface="EnneadTab saved you an estimated {band} in {month} -- one tool did most of it.",
+        body=("Roughly {band}, estimated across {tools} tools you used in {month}. "
+              "The biggest share was {tool}: {tool_runs} runs, assuming about "
+              "{assume} each by hand."),
         tool=name,
     )
 
@@ -382,6 +462,7 @@ def select(metrics, catalog, joined, recommendations,
     for claim in (
         _build_self_growth(metrics, catalog, joined),
         _build_time_in_tools(metrics, catalog, joined),
+        _build_time_saved(metrics, catalog, joined),
         _build_breadth(metrics, catalog, joined, peer_median),
         _build_blind_spot(metrics, recommendations,
                           (peer_data or {}).get("team_adoption")),
@@ -392,7 +473,7 @@ def select(metrics, catalog, joined, recommendations,
     # Guardrail: no comparative claim at all below the volume floor.
     if metrics["month"].get("total_runs", 0) < MIN_RUNS_FOR_COMPARATIVE:
         for claim in candidates:
-            if claim.type in ("breadth", "self_growth"):
+            if claim.type in ("breadth", "self_growth", "time_saved"):
                 claim.rejected_reason = "below MIN_RUNS_FOR_COMPARATIVE"
         candidates = [c for c in candidates if c.rejected_reason is None]
 
@@ -409,6 +490,27 @@ def _display_name(tool_key, catalog, joined):
         return None
     entry = catalog["tools"].get(script_path)
     return entry.get("alias") if entry else None
+
+
+def _display_name_by_script(script_path, catalog):
+    """Human-facing name for a script_path (savings are already script-keyed)."""
+    entry = catalog["tools"].get(script_path)
+    return entry.get("alias") if entry else None
+
+
+def _band_hours(seconds):
+    """Coarse, banded hours -- an authored estimate must not wear a decimal.
+
+    A ".1f" hour reads as measured; a range reads as the estimate it is.
+    """
+    hours = seconds / 3600.0
+    if hours < 2:
+        return "a couple of hours"
+    step = 5 if hours < 40 else 10
+    low = int(hours // step) * step
+    if low <= 0:
+        low = 1
+    return "{}-{} hours".format(low, low + step)
 
 
 def _readable_seconds(seconds):

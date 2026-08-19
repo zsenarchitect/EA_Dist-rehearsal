@@ -28,6 +28,8 @@ import recap_catalog
 import recap_claims
 import recap_email_html
 import recap_env
+import recap_fleet_fetch
+import recap_savings
 import recap_state
 import recap_stats
 
@@ -85,7 +87,49 @@ def build_recap(raw_log, today, state, user_name):
 
     month = metrics["month"]
     joined = recap_catalog.join_usage(
-        catalog, month.get("runs_by_tool"), month.get("basenames_by_tool"))
+        catalog, month.get("runs_by_tool"), month.get("basenames_by_tool"),
+        month.get("seconds_by_tool"))
+
+    # Estimated time saved from the curated manual-effort baseline. Two reads of
+    # the same window: an all-confidence DIAGNOSTIC (dry-run only) and a med+
+    # graded number that is the only one a claim may ever surface. A missing or
+    # empty baseline file yields zeros and simply no time_saved claim.
+    # Baseline source precedence: fleet median with quorum (graded med) -> curated
+    # seed -> contribute 0. With no fleet file yet this is identical to seed-only.
+    seed_baselines, baseline_rejects = recap_savings.load_baselines()
+    fleet_baselines, fleet_rejects = recap_savings.load_fleet_baselines()
+    baselines = recap_savings.merge_baselines(seed_baselines, fleet_baselines)
+    month_cov_ok = month.get("duration_parse_coverage", 0.0) >= 0.8
+    metrics["savings"] = recap_savings.estimate_saved(
+        joined["runs"], joined["seconds_by_script"], baselines,
+        window_total_runs=month.get("total_runs", 0),
+        duration_coverage_ok=month_cov_ok, min_rank=1)
+    metrics["savings_claim"] = recap_savings.estimate_saved(
+        joined["runs"], joined["seconds_by_script"], baselines,
+        window_total_runs=month.get("total_runs", 0),
+        duration_coverage_ok=month_cov_ok, min_rank=2)
+
+    life = metrics.get("lifetime") or {}
+    life_joined = recap_catalog.join_usage(
+        catalog, life.get("runs_by_tool"), life.get("basenames_by_tool"),
+        life.get("seconds_by_tool"))
+    metrics["lifetime_savings"] = recap_savings.estimate_saved(
+        life_joined["runs"], life_joined["seconds_by_script"], baselines,
+        window_total_runs=life.get("total_runs", 0),
+        duration_coverage_ok=life.get("duration_parse_coverage", 0.0) >= 0.8,
+        min_rank=1)
+
+    metrics["baseline_rejects"] = baseline_rejects
+    metrics["fleet_rejects"] = fleet_rejects
+    metrics["baseline_sources"] = {
+        "seed": len(seed_baselines),
+        "fleet_total": len(fleet_baselines),
+        "fleet_quorum": sum(1 for f in fleet_baselines.values()
+                            if f.get("n", 0) >= recap_savings.FLEET_N_MIN),
+        "merged": len(baselines),
+    }
+    metrics["baseline_unresolved"] = recap_savings.unresolved_baseline_keys(
+        baselines, catalog)
 
     # Display names for the chart, resolved through the join so a reworded
     # title still renders as the tool's real name.
@@ -212,6 +256,22 @@ def _toast_chart(recap):
 
 # ------------------------------------------------------------------ reporting
 
+def _fleet_fetch_line(fetch):
+    """One-line FLEET FETCH status for the dry-run report, or None to omit.
+
+    Pure (string in, string out) so it is unit-testable -- the report itself only
+    renders on a real fleet run, which no headless test can reach.
+    """
+    if fetch is None:
+        return None
+    if fetch.get("ok"):
+        suffix = "" if fetch.get("written") else " (not written)"
+        return "FLEET FETCH      : ok, {} tool(s){}".format(
+            fetch.get("tool_count"), suffix)
+    return "FLEET FETCH      : skipped -- {} (used file on disk)".format(
+        fetch.get("reason"))
+
+
 def print_dry_run_report(recap, args):
     metrics = recap["metrics"]
     month = metrics["month"]
@@ -240,6 +300,50 @@ def print_dry_run_report(recap, args):
     if joined["coverage"] < 0.9:
         print("  !! join coverage below 0.9 -- knowledge file may lag the log;")
         print("     comparative claims should be treated as unreliable.")
+
+    print("-" * 68)
+    fetch_line = _fleet_fetch_line(metrics.get("fleet_fetch"))
+    if fetch_line:
+        print(fetch_line)
+    src = metrics.get("baseline_sources") or {}
+    print("BASELINE SOURCES : {} seed, {} fleet ({} with quorum n>={}) -> {} merged".format(
+        src.get("seed", 0), src.get("fleet_total", 0), src.get("fleet_quorum", 0),
+        recap_savings.FLEET_N_MIN, src.get("merged", 0)))
+    if metrics.get("fleet_rejects"):
+        print("  !! {} malformed fleet entr(ies) skipped".format(len(metrics["fleet_rejects"])))
+    print("TIME SAVED (estimated, curated+fleet baseline -- diagnostic, all confidence)")
+    sav = metrics.get("savings") or {}
+    life_sav = metrics.get("lifetime_savings") or {}
+    claim_sav = metrics.get("savings_claim") or {}
+    print("  month    : {:.1f}h  [cov {:.2f}, {} tools, top share {:.0%}]".format(
+        sav.get("seconds_saved", 0.0) / 3600.0, sav.get("baseline_coverage", 0.0),
+        sav.get("distinct_tools", 0), sav.get("max_share", 0.0)))
+    print("  month med+: {:.1f}h  [cov {:.2f}, {} tools, top share {:.0%}]  <- what a claim may use".format(
+        claim_sav.get("seconds_saved", 0.0) / 3600.0,
+        claim_sav.get("baseline_coverage", 0.0),
+        claim_sav.get("distinct_tools", 0), claim_sav.get("max_share", 0.0)))
+    print("  lifetime : {:.1f}h  [cov {:.2f}, {} tools]".format(
+        life_sav.get("seconds_saved", 0.0) / 3600.0,
+        life_sav.get("baseline_coverage", 0.0), life_sav.get("distinct_tools", 0)))
+    tools = recap["catalog"].get("tools", {})
+    for contributor in (sav.get("contributors") or [])[:5]:
+        entry = tools.get(contributor["script"])
+        name = entry.get("alias") if entry else contributor["script"]
+        assumed = contributor["assumed_seconds"]
+        assumed_txt = ("{:.0f}m".format(assumed / 60.0) if assumed >= 60
+                       else "{:.0f}s".format(assumed))
+        print("    +{:>5.1f}h  {}x @ assumed {}/run  {}".format(
+            contributor["seconds"] / 3600.0, contributor["runs"], assumed_txt, name))
+    if metrics.get("baseline_unresolved"):
+        print("  !! {} baseline key(s) do NOT resolve to a tool (silent-miss risk):".format(
+            len(metrics["baseline_unresolved"])))
+        for script in metrics["baseline_unresolved"][:5]:
+            print("       {!r}".format(script))
+    if metrics.get("baseline_rejects"):
+        print("  !! {} malformed baseline entr(ies) skipped:".format(
+            len(metrics["baseline_rejects"])))
+        for script, why in list(metrics["baseline_rejects"].items())[:5]:
+            print("       {!r}: {}".format(script, why))
 
     print("-" * 68)
     print("CLAIM CANDIDATES (scored, best first)")
@@ -274,6 +378,7 @@ def selftest():
     for label, thunk in (
         ("recap_stats", lambda: recap_stats.build({}, datetime.date.today())),
         ("recap_catalog", lambda: recap_catalog.build_catalog()),
+        ("recap_savings", lambda: recap_savings.load_baselines()),
         ("recap_email_html", lambda: recap_email_html.bar_chart(
             [{"label": "a", "value": 1}])),
         ("EnneadTab bootstrap", lambda: recap_env.bootstrap()),
@@ -309,6 +414,9 @@ def parse_args(argv):
                         help="Override today's date (testing).")
     parser.add_argument("--no-open", action="store_true",
                         help="Do not open the preview in a browser.")
+    parser.add_argument("--no-fetch", action="store_true",
+                        help="Skip the fleet-baseline HTTP refresh (use the file "
+                             "already on disk).")
     args = parser.parse_args(argv)
 
     # Dry run is the default, and --fake-user can never be anything else:
@@ -345,7 +453,31 @@ def main(argv=None):
     else:
         state = recap_state.load(user_name)
 
+    # Refresh the fleet baselines BEFORE build_recap reads them off disk. Never
+    # fatal: refresh_fleet_baselines fails soft, and build_recap falls back to the
+    # curated seed when the file is stale or absent. Skipped in standalone/testing
+    # mode (which bypasses the library and must not hit the network) and under
+    # --no-fetch. A skip is logged, never swallowed.
+    fleet_status = None
+    want_fetch = not _is_standalone(args) and not args.no_fetch
+    # A REAL run must respect the weekly-digest opt-out: an opted-out machine has
+    # no reason to pull baselines it will never surface. Dry runs are manual review
+    # and always fetch so the preview reflects live fleet data.
+    if want_fetch and not args.dry_run and not recap_env.is_digest_enabled():
+        want_fetch = False
+    if want_fetch:
+        try:
+            fleet_status = recap_fleet_fetch.refresh_fleet_baselines()
+        except Exception as error:       # contract says it won't, but never crash the recap
+            fleet_status = {"ok": False, "written": False,
+                            "reason": "{}: {}".format(type(error).__name__, error)}
+        if not fleet_status.get("ok"):
+            print("fleet baseline refresh skipped: {} (using file on disk)".format(
+                fleet_status.get("reason")))
+
     recap = build_recap(raw_log, today, state, user_name)
+    if fleet_status is not None:
+        recap["metrics"]["fleet_fetch"] = fleet_status
 
     if recap["claim"] is None:
         print("No claim qualified -- nothing worth sending. "

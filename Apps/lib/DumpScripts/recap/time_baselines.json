@@ -1,0 +1,89 @@
+{
+  "_comment": "Curated per-tool manual-effort baselines for the usage recap time-saved estimate. manual_seconds = a CONSERVATIVE estimate of how long the same task takes BY HAND per run; time saved = (manual_seconds - observed runtime) x runs, floored at 0. These are authored estimates (no real timings yet) so none is graded above 'med'; low-confidence entries feed the dry-run diagnostic but never a user-facing claim. Replace with measured timings to raise confidence. Keyed by catalog script_path.",
+  "_provenance": "seeded 2026-08-12 from popular EnneadTab tools; manual_seconds reviewed + corrected by owner (\u5f20\u8001\u677f) via pick-options 2026-08-12 -> all owner-set values graded 'med' (expert estimate, not stopwatch-timed).",
+  "EnneadTab.tab\\ACE.panel\\Excel Sheet Creator.pulldown\\excel_sheet_creator.pushbutton\\excel_sheet_creator_script.py": {
+    "manual_seconds": 1200.0,
+    "confidence": "med",
+    "basis": "Creating a batch of titleblock sheets by hand from an Excel list (dozens of sheets, named + placed one by one)."
+  },
+  "EnneadTab.tab\\ACE.panel\\Family.pulldown\\Family RePath.pushbutton\\family repath_script.py": {
+    "manual_seconds": 14400.0,
+    "confidence": "med",
+    "basis": "Locating each family's file path and remapping it to a chosen folder by hand."
+  },
+  "EnneadTab.tab\\ACE.panel\\Family.pulldown\\rename_nesting_family.pushbutton\\rename_nesting_family_script.py": {
+    "manual_seconds": 7200.0,
+    "confidence": "med",
+    "basis": "Manually scanning nested components across project families and renaming them."
+  },
+  "EnneadTab.tab\\Import Export.panel\\ennead_exporter.pushbutton\\super_exporter_script.py": {
+    "manual_seconds": 7200.0,
+    "confidence": "med",
+    "basis": "Setting up and running a multi-format export (DWG/PDF/image) sheet by sheet by hand."
+  },
+  "EnneadTab.tab\\Import Export.panel\\schedule2excel.pushbutton\\schedule2excel_script.py": {
+    "manual_seconds": 900.0,
+    "confidence": "med",
+    "basis": "Copying a schedule out of Revit into Excel by hand and reformatting."
+  },
+  "EnneadTab.tab\\ACE.panel\\Worksets.pulldown\\create_worksets.pushbutton\\create_worksets_script.py": {
+    "manual_seconds": 600.0,
+    "confidence": "med",
+    "basis": "Creating the standard Ennead workset structure one workset at a time."
+  },
+  "EnneadTab.tab\\Manage.panel\\Merge Family.pushbutton\\Merge_Family_script.py": {
+    "manual_seconds": 14400.0,
+    "confidence": "med",
+    "basis": "Merging family types into a target family manually, type by type."
+  },
+  "EnneadTab.tab\\Manage.panel\\load family to many docs.pushbutton\\load family to many docs_script.py": {
+    "manual_seconds": 1200.0,
+    "confidence": "med",
+    "basis": "Loading each family into each open project by hand (families x documents)."
+  },
+  "EnneadTab.tab\\Tools.panel\\general_renamer.pushbutton\\general_renamer_script.py": {
+    "manual_seconds": 900.0,
+    "confidence": "med",
+    "basis": "Batch-style renaming that would otherwise be done element by element by hand."
+  },
+  "EnneadTab.tab\\Tools.panel\\batch_cut.pushbutton\\batch_cut_script.py": {
+    "manual_seconds": 1800.0,
+    "confidence": "med",
+    "basis": "Cutting curtain-wall elements one by one by hand."
+  },
+  "EnneadTab.tab\\ACE.panel\\wall_type_diagram.pushbutton\\wall_type_diagram_script.py": {
+    "manual_seconds": 900.0,
+    "confidence": "med",
+    "basis": "Drawing a wall-type legend view and building the matching view filters by hand."
+  },
+  "EnneadTab.tab\\ACE.panel\\transfer_parameter_data.pushbutton\\transfer_parameter_data_script.py": {
+    "manual_seconds": 900.0,
+    "confidence": "med",
+    "basis": "Copying data from one parameter to another across elements by hand."
+  },
+  "View.tab\\batch_export_rhino_view.button\\batch_export_rhino_view_left.py": {
+    "manual_seconds": 600.0,
+    "confidence": "med",
+    "basis": "Exporting several named Rhino views one at a time by hand."
+  },
+  "View.tab\\batch_rename_camera.button\\batch_rename_camera_left.py": {
+    "manual_seconds": 300.0,
+    "confidence": "med",
+    "basis": "Renaming cameras one by one by hand."
+  },
+  "Layer.tab\\merge_layer.button\\merge_layer_left.py": {
+    "manual_seconds": 3600.0,
+    "confidence": "med",
+    "basis": "Moving objects between layers and deleting the empty layer by hand."
+  },
+  "Material.tab\\merge_materials.button\\merge_materials_left.py": {
+    "manual_seconds": 1200.0,
+    "confidence": "med",
+    "basis": "Reassigning objects to a single material and cleaning up duplicates by hand."
+  },
+  "Render.tab\\rename_enscape_files.button\\rename_enscape_files_left.py": {
+    "manual_seconds": 300.0,
+    "confidence": "med",
+    "basis": "Renaming a batch of Enscape output files by hand to strip the long suffix."
+  }
+}
