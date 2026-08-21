@@ -24,6 +24,14 @@ from .web_ui import get_index_html
 _KEYS_URL = "https://enneadtab.com/api/keys/llm"
 
 
+class CentralKeyFetchError(Exception):
+    """Raised when the EnneadTabHome central key endpoint cannot be reached or parsed.
+
+    Deliberately NOT caught-and-ignored by callers into a silent local-env-var
+    fallback -- see todo #2320 Phase 0.
+    """
+
+
 def _kill_pid(pid: int) -> bool:
     """Terminate a process by PID. Returns True if killed successfully."""
     try:
@@ -101,35 +109,38 @@ def _kill_zombies(port: int) -> None:
 def _fetch_central_keys() -> Dict[str, Dict[str, str]]:
     """Fetch LLM API keys from EnneadTabHome.
 
-    Uses DEBUG_BYPASS_SECRET for auth (set on the Vercel project).
-    Falls back to environment variables if the fetch fails.
+    Uses DEBUG_BYPASS_SECRET for auth (set on the Vercel project). If
+    DEBUG_BYPASS_SECRET is unset, central auth is simply not configured and
+    this returns an empty dict (not an error). If it IS set but the fetch
+    fails or the response can't be parsed, this fails CLOSED: it raises
+    CentralKeyFetchError rather than silently resurrecting local
+    ANTHROPIC_API_KEY/GOOGLE_API_KEY/GEMINI_API_KEY env vars, which was
+    itself a raw-key leak path (todo #2320 Phase 0).
     """
-    providers = {}
-
-    # Try central endpoint first
     bypass = os.environ.get("DEBUG_BYPASS_SECRET", "")
-    if bypass:
-        try:
-            req = urllib.request.Request(_KEYS_URL, method="GET")
-            req.add_header("x-debug-bypass", bypass)
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                providers = data.get("providers", {})
-        except Exception:
-            pass
+    if not bypass:
+        return {}
 
-    # Fallback to local environment variables
-    if "anthropic" not in providers:
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if key:
-            providers["anthropic"] = {"key": key, "model": "claude-sonnet-4-20250514"}
-
-    if "gemini" not in providers:
-        key = os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
-        if key:
-            providers["gemini"] = {"key": key, "model": "gemini-2.5-flash"}
-
-    return providers
+    try:
+        req = urllib.request.Request(_KEYS_URL, method="GET")
+        req.add_header("x-debug-bypass", bypass)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("providers", {})
+    except urllib.error.HTTPError as e:
+        print(
+            "ERROR: central key fetch failed: GET {} -> HTTP {} ({})".format(
+                _KEYS_URL, e.code, type(e).__name__),
+            file=sys.stderr,
+        )
+        raise CentralKeyFetchError("HTTP {} from {}".format(e.code, _KEYS_URL)) from e
+    except Exception as e:
+        print(
+            "ERROR: central key fetch failed: GET {} -> {}: {}".format(
+                _KEYS_URL, type(e).__name__, e),
+            file=sys.stderr,
+        )
+        raise CentralKeyFetchError("{}: {}".format(type(e).__name__, e)) from e
 
 
 def _execute_tool(tools: Dict[str, Any], name: str, arguments: Dict) -> Any:
@@ -152,8 +163,18 @@ def _get_tool_list(tools: Dict[str, Any]) -> List[Dict[str, Any]]:
     return result
 
 
-def make_handler(tools: Dict[str, Any], providers: Dict[str, Dict[str, str]], port: int):
-    """Create a request handler class with tool and provider context."""
+def make_handler(
+    tools: Dict[str, Any],
+    providers: Dict[str, Dict[str, str]],
+    port: int,
+    central_key_error: Optional[str] = None,
+):
+    """Create a request handler class with tool and provider context.
+
+    central_key_error, when set, means the central key fetch failed (as
+    opposed to central auth simply being unconfigured) -- chat requests
+    surface a clean, specific message instead of the generic "no key" one.
+    """
 
     class ChatHandler(BaseHTTPRequestHandler):
 
@@ -291,7 +312,11 @@ def make_handler(tools: Dict[str, Any], providers: Dict[str, Dict[str, str]], po
                 api_key = manual_key
 
             if not api_key:
-                self._json_response(400, json.dumps({"error": "No API key for {}".format(provider)}).encode())
+                if central_key_error:
+                    msg = "Could not reach EnneadTab's central key service -- AI chat is unavailable right now."
+                else:
+                    msg = "No API key for {}".format(provider)
+                self._json_response(400, json.dumps({"error": msg}).encode())
                 return
 
             mcp_tools = _get_tool_list(tools)
@@ -382,13 +407,24 @@ def start_web_server(
     _kill_zombies(port)
 
     print("Fetching API keys...", file=sys.stderr)
-    providers = _fetch_central_keys()
+    central_key_error: Optional[str] = None
+    try:
+        providers = _fetch_central_keys()
+    except CentralKeyFetchError as e:
+        providers = {}
+        central_key_error = str(e)
+        print(
+            "WARNING: central key service unavailable ({}). Continuing without "
+            "central keys -- users must supply a manual API key.".format(e),
+            file=sys.stderr,
+        )
+
     if providers:
         print("Available providers: {}".format(", ".join(providers.keys())), file=sys.stderr)
-    else:
+    elif not central_key_error:
         print("WARNING: No API keys found. Users must provide keys manually.", file=sys.stderr)
 
-    handler_class = make_handler(mcp_tools, providers, port)
+    handler_class = make_handler(mcp_tools, providers, port, central_key_error)
 
     try:
         httpd = HTTPServer((host, port), handler_class)
