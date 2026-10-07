@@ -26,6 +26,50 @@ class AIAssistantHandler(http.server.BaseHTTPRequestHandler):
     """Handles HTTP requests for the AI assistant webapp."""
 
     # ------------------------------------------------------------------
+    # Origin check
+    # ------------------------------------------------------------------
+
+    def _allowed_origins(self):
+        port = self.server.server_address[1]
+        return {
+            "http://127.0.0.1:{}".format(port),
+            "http://localhost:{}".format(port),
+        }
+
+    def _same_origin(self):
+        """True if this request can be attributed to OUR OWN served page.
+
+        2026-09-18 SECURITY (senzhang-todo, EnneadTab-OS audit): /api/chat
+        drives _execute_revit_tool, which forwards straight to pyRevit Routes
+        on localhost:48884 with zero auth of its own -- any page that can POST
+        here can run arbitrary tool calls (including code execution) against
+        the connected Revit instance. The legitimate caller is this server's
+        OWN webapp running in the user's browser, so we cannot reject every
+        browser-shaped request outright; we only reject one whose Origin/
+        Referer, when present, names a DIFFERENT origin than this server.
+        Neither header present means a non-browser local caller -- already
+        unauthenticated by design, unchanged by this check.
+        """
+        allowed = self._allowed_origins()
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            return origin in allowed
+        referer = self.headers.get("Referer")
+        if referer is not None:
+            return any(referer == o or referer.startswith(o + "/") for o in allowed)
+        return True
+
+    def _refuse_cross_origin(self):
+        body = json.dumps({
+            "error": "Refused: cross-origin requests are not accepted by this local server.",
+        }).encode("utf-8")
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # ------------------------------------------------------------------
     # Routing
     # ------------------------------------------------------------------
 
@@ -37,14 +81,24 @@ class AIAssistantHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/api/chat":
+            if not self._same_origin():
+                self._refuse_cross_origin()
+                return
             self._handle_chat()
         elif self.path == "/api/revit/status":
+            if not self._same_origin():
+                self._refuse_cross_origin()
+                return
             self._proxy_revit("GET", "/enneadtab/status/")
         else:
             self.send_error(404)
 
     def do_OPTIONS(self):
         """Handle CORS preflight requests."""
+        if not self._same_origin():
+            self.send_response(403)
+            self.end_headers()
+            return
         self.send_response(204)
         self._cors_headers()
         self.end_headers()
@@ -258,7 +312,10 @@ class AIAssistantHandler(http.server.BaseHTTPRequestHandler):
             return None
 
     def _cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Reflect ONLY our own origin, never "*" -- see _same_origin() above.
+        origin = self.headers.get("Origin")
+        if origin in self._allowed_origins():
+            self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 

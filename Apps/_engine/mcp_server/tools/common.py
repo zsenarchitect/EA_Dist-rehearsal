@@ -33,6 +33,28 @@ def _get_enneadtab_source_roots() -> List[str]:
     return roots
 
 
+def _resolve_within_root(root: str, rel_path: str) -> Optional[str]:
+    """Join *rel_path* onto *root* and refuse to leave it.
+
+    2026-09-18 SECURITY: ``os.path.join(root, rel_path)`` silently DISCARDS
+    ``root`` when ``rel_path`` is absolute (``os.path.join("/a", "/etc/passwd")
+    == "/etc/passwd"``; same on Windows for a drive-rooted path), and even a
+    relative ``rel_path`` can climb out via ``..`` segments that
+    ``os.path.join`` never collapses. Both let a tool-calling LLM (or a page
+    the assistant summarized, via prompt injection) read or list any file the
+    Revit/Rhino process can see, not just the intended EnneadTab-OS source
+    tree. Reject an absolute path outright, then verify the normalized,
+    resolved result is still inside `root` before returning it.
+    """
+    if not rel_path or os.path.isabs(rel_path):
+        return None
+    candidate = os.path.realpath(os.path.join(root, rel_path))
+    root_real = os.path.realpath(root)
+    if candidate != root_real and not candidate.startswith(root_real + os.sep):
+        return None
+    return candidate
+
+
 def register_common_tools(mcp: McpServer, adapter: AppAdapter) -> None:
     """Register application-agnostic tools on *mcp*."""
 
@@ -266,8 +288,8 @@ def register_common_tools(mcp: McpServer, adapter: AppAdapter) -> None:
         """Read a file from the EnneadTab source tree."""
         roots = _get_enneadtab_source_roots()
         for root in roots:
-            full = os.path.join(root, file_path)
-            if os.path.isfile(full):
+            full = _resolve_within_root(root, file_path)
+            if full and os.path.isfile(full):
                 try:
                     with open(full, "r", encoding="utf-8", errors="replace") as f:
                         lines = f.readlines()
@@ -304,8 +326,8 @@ def register_common_tools(mcp: McpServer, adapter: AppAdapter) -> None:
         roots = _get_enneadtab_source_roots()
         results = []
         for root in roots:
-            target = os.path.join(root, directory)
-            if not os.path.isdir(target):
+            target = _resolve_within_root(root, directory)
+            if not target or not os.path.isdir(target):
                 continue
             for item in sorted(os.listdir(target)):
                 full = os.path.join(target, item)
@@ -407,7 +429,16 @@ def register_common_tools(mcp: McpServer, adapter: AppAdapter) -> None:
     def fetch_webpage(url: str = "") -> str:
         """Fetch a webpage and extract text content."""
         import re
+        import urllib.parse
         import urllib.request
+        # 2026-09-18 SECURITY: urllib.request follows whatever scheme the URL
+        # names -- an LLM tool call (directly, or via prompt injection from
+        # summarized content) passing "file:///C:/Users/.../secrets.txt" reads
+        # a local file and returns its contents as "webpage text". Restrict to
+        # the schemes this tool is actually documented to fetch.
+        scheme = urllib.parse.urlsplit(url).scheme.lower()
+        if scheme not in ("http", "https"):
+            return "Refused: only http:// and https:// URLs are allowed."
         req = urllib.request.Request(url)
         req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         try:

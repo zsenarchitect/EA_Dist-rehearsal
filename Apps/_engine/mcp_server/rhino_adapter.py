@@ -8,7 +8,13 @@ from .adapter import AppAdapter
 from ._http import HttpClient, HttpStatusError
 from .error_reporter import report_error
 
-_BASE_URL = "http://localhost:48885"
+# rhino_rpc_server.py does not bind a fixed port -- it binds the first free
+# port in its own window (48900-48915), so there is no single correct
+# default here. This fallback only matters for a caller that constructs
+# RhinoAdapter() directly without detecting the real port first (see
+# __main__.py's detect_rhino_port(), which is what the CLI entry point
+# actually uses -- TODO-6584).
+_BASE_URL = "http://localhost:48900"
 _TIMEOUT = 30.0  # seconds
 _PREFIX = "/enneadtab"
 
@@ -17,7 +23,9 @@ class RhinoAdapter(AppAdapter):
     """Concrete adapter that forwards MCP calls to a running Rhino instance.
 
     Communication happens over HTTP via a custom RPC server running inside
-    Rhino on port 48885.
+    Rhino. That server binds the first free port in its own window
+    (48900-48915), not a fixed port -- pass the real detected port as
+    ``base_url`` (see __main__.py's detect_rhino_port()).
     """
 
     def __init__(self, base_url: str = _BASE_URL, timeout: float = _TIMEOUT) -> None:

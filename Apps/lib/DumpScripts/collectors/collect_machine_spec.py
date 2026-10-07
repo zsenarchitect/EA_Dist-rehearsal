@@ -12,7 +12,7 @@ import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from infrawatch_common import post_to_infrawatch, report_error, get_machine_name, get_username
+from infrawatch_common import post_to_infrawatch, report_error, get_machine_name, get_username, get_dist_version
 
 
 def _ps_json(command):
@@ -33,6 +33,7 @@ def collect_spec():
         "machine_name": get_machine_name(),
         "username": get_username(),
         "os": platform.platform(),
+        "dist_version": get_dist_version(),
     }
 
     # CPU

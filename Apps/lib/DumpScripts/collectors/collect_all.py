@@ -8,6 +8,7 @@ Modes:
     python collect_all.py --heavy       # Drive health + machine spec (slow-changing data, run every 6h)
     python collect_all.py --events-only # Just events (run hourly for fast detection)
     python collect_all.py --journals-only # Revit journals only (weekly; independent kill switch)
+    python collect_all.py --storage-only # Storage folder snapshots (weekly on designated reporter pool)
     python collect_all.py --spec-only   # Just machine spec (good for login trigger)
     python collect_all.py --loop 60     # Every 60 minutes (in-process; prefer Task Scheduler)
 """
@@ -67,6 +68,12 @@ def run_journals_only():
     collect_revit_journal.main()
 
 
+def run_storage_only():
+    """Weekly storage snapshot collector on designated reporter pool."""
+    import collect_storage
+    collect_storage.main()
+
+
 def _journal_kill_switch_active():
     import collect_revit_journal
     return collect_revit_journal.journal_kill_switch_active()
@@ -77,6 +84,11 @@ def main():
         if _journal_kill_switch_active():
             return
         run_journals_only()
+        return
+    if "--storage-only" in sys.argv:
+        if _kill_switch_active():
+            return
+        run_storage_only()
         return
     if _kill_switch_active():
         return

@@ -30,6 +30,7 @@ def run_chat(
     execute_fn: Callable[[str, Dict], Any],
     system_text: str = SYSTEM_PROMPT,
     max_iterations: int = 10,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a chat turn with tool-use loop.
 
@@ -41,12 +42,14 @@ def run_chat(
         execute_fn: Callback to execute a tool: (name, args) -> result
         system_text: System prompt
         max_iterations: Safety cap on tool-use loops
+        model: Optional model id override (Gemini only). Falls back to the
+            provider-configured model, then the built-in default.
 
     Returns:
         {content: str, tool_calls: [{name, input, result}]}
     """
     if provider == "gemini":
-        return _run_gemini(api_key, messages, mcp_tools, execute_fn, system_text, max_iterations)
+        return _run_gemini(api_key, messages, mcp_tools, execute_fn, system_text, max_iterations, model)
     elif provider == "anthropic":
         return _run_anthropic(api_key, messages, mcp_tools, execute_fn, system_text, max_iterations)
     else:
@@ -78,10 +81,17 @@ def _to_gemini_contents(messages: List[Dict[str, str]]) -> List[Dict]:
     return contents
 
 
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+
+
 def _call_gemini(api_key: str, contents: List[Dict], tools: List[Dict],
-                 system_text: str) -> Dict:
+                 system_text: str, model: Optional[str] = None) -> Dict:
+    # Honor the model from the EnneadTabHome /api/keys/llm payload (todo #1452):
+    # central config > explicit override > built-in default. The previous
+    # hardcoded model meant fleet model bumps never took effect.
+    model_name = model or DEFAULT_GEMINI_MODEL
     url = ("https://generativelanguage.googleapis.com/v1beta/"
-           "models/gemini-2.5-flash:generateContent?key={}".format(api_key))
+           "models/{}:generateContent?key={}".format(model_name, api_key))
     body = {
         "contents": contents,
         "tools": tools,
@@ -95,13 +105,13 @@ def _call_gemini(api_key: str, contents: List[Dict], tools: List[Dict],
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _run_gemini(api_key, messages, mcp_tools, execute_fn, system_text, max_iter):
+def _run_gemini(api_key, messages, mcp_tools, execute_fn, system_text, max_iter, model=None):
     tools = _gemini_tools(mcp_tools)
     contents = _to_gemini_contents(messages)
     tool_calls = []
 
     for _ in range(max_iter):
-        resp = _call_gemini(api_key, contents, tools, system_text)
+        resp = _call_gemini(api_key, contents, tools, system_text, model)
         candidate = resp.get("candidates", [{}])[0]
         parts = candidate.get("content", {}).get("parts", [])
 
@@ -163,7 +173,11 @@ def _call_anthropic(api_key: str, messages: List[Dict], tools: List[Dict],
                     system_text: str) -> Dict:
     url = "https://api.anthropic.com/v1/messages"
     body = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-5",
+        # Keep the pre-migration behavior: claude-sonnet-4 did no thinking by
+        # default, but on claude-sonnet-5 an omitted `thinking` runs adaptive
+        # thinking, which would consume part of the 4096 max_tokens budget.
+        "thinking": {"type": "disabled"},
         "max_tokens": 4096,
         "system": system_text,
         "messages": messages,

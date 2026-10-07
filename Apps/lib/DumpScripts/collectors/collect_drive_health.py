@@ -60,15 +60,19 @@ def _wmi_drives_by_letter():
             protocol = "SMB" if drive_type == 4 else "Local"
             latency_ms = _measure_latency("{}\\".format(letter))
 
-            by_letter[letter] = {
-                "unc_path": unc_path,
-                "latency_ms": latency_ms,
+            drive_info = {
                 "total_gb": total_gb,
                 "used_gb": used_gb,
                 "free_gb": free_gb,
                 "usage_pct": usage_pct,
                 "protocol": protocol,
             }
+            if unc_path is not None:
+                drive_info["unc_path"] = unc_path
+            if latency_ms is not None:
+                drive_info["latency_ms"] = latency_ms
+
+            by_letter[letter] = drive_info
     except Exception as e:
         report_error("collect_drive_health._wmi_drives_by_letter", str(e))
     return by_letter

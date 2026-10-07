@@ -132,3 +132,23 @@ def get_machine_name():
 
 def get_username():
     return os.environ.get("USERNAME", "Unknown")
+
+
+def get_dist_version():
+    """Version stamp of the installed EA_Dist publish, or None if unavailable.
+
+    Mirrors Apps/lib/EnneadTab/ENVIRONMENT.py's get_dist_version() without importing
+    that module: collectors are stdlib-only, and importing the full EnneadTab package
+    would pull in its module-level folder-creation side effects (ECO_SYS_FOLDER,
+    DUMP_FOLDER) that a 15-min background collector has no business triggering.
+    Any failure (missing file, corrupt JSON, partial installer extract) collapses to
+    None so a bad version stamp can never break the collector.
+    """
+    try:
+        lib_folder = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        version_file = os.path.join(lib_folder, "EnneadTab", "DIST_VERSION.json")
+        with open(version_file, "r") as f:
+            version = json.load(f).get("version")
+        return str(version) if version is not None else None
+    except Exception:
+        return None

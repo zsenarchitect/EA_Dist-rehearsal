@@ -1,0 +1,36 @@
+{
+    "_comment": "InfraWatch storage folder snapshot watchlist. Supports cross-platform tokens: {REPO_ROOT}, {HOME}, path_win, path_mac.",
+    "reporters": [
+        "EANY-PW-0HJ97N",
+        "MININT-5V26DTJ",
+        "MININT-H00D42F"
+    ],
+    "folders": [
+        {
+            "canonical_key": "ea_dist",
+            "folder_path": "{REPO_ROOT}/../EA_Dist",
+            "path_win": "\\\\ennead.com\\resources\\EA_Dist",
+            "path_mac": "/Volumes/resources/EA_Dist",
+            "description": "EnneadTab software distribution root"
+        },
+        {
+            "canonical_key": "project_archive",
+            "path_win": "\\\\ennead.com\\projects\\Archive",
+            "path_mac": "/Volumes/projects/Archive",
+            "description": "Project archive share"
+        },
+        {
+            "canonical_key": "enneadtab_settings",
+            "folder_path": "{REPO_ROOT}/../EnneadTab_Settings",
+            "path_win": "L:\\EnneadTab_Settings",
+            "path_mac": "/Volumes/EnneadTab_Settings",
+            "description": "EnneadTab central settings"
+        },
+        {
+            "canonical_key": "shared_library",
+            "path_win": "J:\\Shared",
+            "path_mac": "/Volumes/Shared",
+            "description": "Office shared resources"
+        }
+    ]
+}

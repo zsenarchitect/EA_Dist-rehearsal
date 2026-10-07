@@ -80,7 +80,7 @@ def _out_path(args, file_name):
 
 # --------------------------------------------------------------------- recap
 
-def build_recap(raw_log, today, state, user_name):
+def build_recap(raw_log, today, state, user_name, fleet_path=None):
     """Everything the surfaces need, computed once. No I/O."""
     metrics = recap_stats.build(raw_log, today)
     catalog = recap_catalog.build_catalog()
@@ -96,8 +96,15 @@ def build_recap(raw_log, today, state, user_name):
     # empty baseline file yields zeros and simply no time_saved claim.
     # Baseline source precedence: fleet median with quorum (graded med) -> curated
     # seed -> contribute 0. With no fleet file yet this is identical to seed-only.
+    #
+    # fleet_path is explicit-arg-only (senzhang-todo #3939): the __file__-relative
+    # default in recap_savings.load_fleet_baselines lives inside the git-synced
+    # EA_Dist tree, which a fleet machine cannot durably write to (read-only, or
+    # reset on the next sync) -- main() resolves the real writable path via
+    # _out_path/recap_env.dump_file and passes it down. recap_savings itself stays
+    # pure/no-EnneadTab-import so it is still unit-testable off Windows.
     seed_baselines, baseline_rejects = recap_savings.load_baselines()
-    fleet_baselines, fleet_rejects = recap_savings.load_fleet_baselines()
+    fleet_baselines, fleet_rejects = recap_savings.load_fleet_baselines(path=fleet_path)
     baselines = recap_savings.merge_baselines(seed_baselines, fleet_baselines)
     month_cov_ok = month.get("duration_parse_coverage", 0.0) >= 0.8
     metrics["savings"] = recap_savings.estimate_saved(
@@ -130,18 +137,6 @@ def build_recap(raw_log, today, state, user_name):
     }
     metrics["baseline_unresolved"] = recap_savings.unresolved_baseline_keys(
         baselines, catalog)
-
-    # Display names for the chart, resolved through the join so a reworded
-    # title still renders as the tool's real name.
-    display_names = {}
-    for key in month.get("runs_by_tool", {}):
-        script_path = catalog["by_alias"].get(key)
-        if script_path is None:
-            basename = (month.get("basenames_by_tool") or {}).get(key)
-            script_path = catalog["by_basename"].get(basename) if basename else None
-        if script_path and script_path in catalog["tools"]:
-            display_names[key] = catalog["tools"][script_path]["alias"]
-    metrics["display_names"] = display_names
 
     # Apps the user actually touches -- never recommend into an unused one.
     active_apps = set()
@@ -214,7 +209,11 @@ def write_pending_digest(args, recap, today):
         "body_text": claim.render_body(),
         "claim_type": claim.type,
         "html_path": html_path,
-        "chart": _toast_chart(recap),
+        # NOTE: a "chart" key used to be built here via _toast_chart(), but no
+        # NOTIFICATION.messenger() signature accepts it and no host renders it
+        # -- it raised TypeError on every toast call and was silently dropped.
+        # Removed with the builder in senzhang-todo #3897. Do not re-add
+        # without a real renderer on the NotificationHost side.
     }
 
     if args.dry_run:
@@ -229,29 +228,10 @@ def write_pending_digest(args, recap, today):
     return PENDING_FILE
 
 
-def _toast_chart(recap):
-    """Declarative chart payload -- NotificationHost renders it.
-
-    The producer never rasterizes anything: it ships raw data plus a type, so
-    the Revit/Rhino side only builds a dict and stays IronPython-2.7 safe.
-    `mask_labels` hides the winning bar's identity, which is the visual half of
-    the curiosity gap.
-    """
-    month = recap["metrics"]["month"]
-    top = month.get("top_tools") or []
-    if not top:
-        return None
-    names = recap["metrics"].get("display_names") or {}
-    series = []
-    for key, count in top[:5]:
-        series.append({"label": names.get(key, key), "value": count})
-    return {
-        "type": "bar",
-        "series": series,
-        "highlight": 0,
-        "mask_labels": True,
-        "caption": recap["metrics"]["month_label"],
-    }
+# _toast_chart() was deleted in senzhang-todo #3897: the declarative chart
+# payload it built was never accepted by NOTIFICATION.messenger() and never
+# rendered by any host -- it raised TypeError on every call and was silently
+# dropped. See the NOTE on the pending-digest payload above.
 
 
 # ------------------------------------------------------------------ reporting
@@ -453,6 +433,17 @@ def main(argv=None):
     else:
         state = recap_state.load(user_name)
 
+    # Where the fleet baselines file actually lives (senzhang-todo #3939): the
+    # module-level defaults in recap_fleet_fetch/recap_savings resolve next to
+    # __file__, which on an EA_Dist-shipped fleet machine sits inside the
+    # git-synced tree -- read-only or clobbered on the next sync, so a write there
+    # is not durable even when the OS permission bit allows it. _out_path already
+    # gives every other output file in this module the same real writable path
+    # (recap_env.dump_file, i.e. the user's own EnneadTab dump folder) with an
+    # --out-dir override for standalone/test runs; reuse it here rather than
+    # inventing a second path-resolution rule.
+    fleet_path = _out_path(args, recap_fleet_fetch.FLEET_FILE)
+
     # Refresh the fleet baselines BEFORE build_recap reads them off disk. Never
     # fatal: refresh_fleet_baselines fails soft, and build_recap falls back to the
     # curated seed when the file is stale or absent. Skipped in standalone/testing
@@ -467,7 +458,7 @@ def main(argv=None):
         want_fetch = False
     if want_fetch:
         try:
-            fleet_status = recap_fleet_fetch.refresh_fleet_baselines()
+            fleet_status = recap_fleet_fetch.refresh_fleet_baselines(dest=fleet_path)
         except Exception as error:       # contract says it won't, but never crash the recap
             fleet_status = {"ok": False, "written": False,
                             "reason": "{}: {}".format(type(error).__name__, error)}
@@ -475,7 +466,7 @@ def main(argv=None):
             print("fleet baseline refresh skipped: {} (using file on disk)".format(
                 fleet_status.get("reason")))
 
-    recap = build_recap(raw_log, today, state, user_name)
+    recap = build_recap(raw_log, today, state, user_name, fleet_path=fleet_path)
     if fleet_status is not None:
         recap["metrics"]["fleet_fetch"] = fleet_status
 

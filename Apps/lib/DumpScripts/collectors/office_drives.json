@@ -1,8 +1,0 @@
-{
-  "expected": [
-    { "letter": "G", "label": "Projects", "unc": "\\\\nas\\projects" },
-    { "letter": "J", "label": "Shared", "unc": "\\\\nas\\shared" },
-    { "letter": "P", "label": "Office", "unc": "\\\\fileserver\\office" }
-  ],
-  "probe_timeout_sec": 5
-}

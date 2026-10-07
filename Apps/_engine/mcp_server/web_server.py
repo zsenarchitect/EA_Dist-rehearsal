@@ -176,7 +176,51 @@ def make_handler(
     surface a clean, specific message instead of the generic "no key" one.
     """
 
+    allowed_origins = {
+        "http://127.0.0.1:{}".format(port),
+        "http://localhost:{}".format(port),
+    }
+
     class ChatHandler(BaseHTTPRequestHandler):
+
+        def _same_origin(self):
+            """True if this request can be attributed to OUR OWN served page.
+
+            2026-09-18 SECURITY (senzhang-todo, EnneadTab-OS audit): /api/chat lets
+            the LLM invoke the execute_code tool, so any page that can POST here
+            can run arbitrary code inside the connected Revit/Rhino process. The
+            legitimate caller is this server's OWN chat page running in the user's
+            browser -- so unlike a pure local-tool socket, we cannot reject every
+            browser-shaped request (that would break the real UI). Instead we
+            check that Origin/Referer, WHEN PRESENT, actually names this server.
+            A same-origin fetch() always carries a matching Origin on POST; a
+            cross-origin page (the attack this closes) carries its own origin.
+            Neither header present means a non-browser local caller (curl, a
+            script) -- unauthenticated by design already, unchanged by this check.
+            """
+            origin = self.headers.get("Origin")
+            if origin is not None:
+                return origin in allowed_origins
+            referer = self.headers.get("Referer")
+            if referer is not None:
+                return any(
+                    referer == o or referer.startswith(o + "/")
+                    for o in allowed_origins
+                )
+            return True
+
+        def _refuse_cross_origin(self):
+            body = json.dumps({
+                "error": "Refused: cross-origin requests are not accepted by "
+                         "this local server.",
+            }).encode()
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            # No CORS headers on the refusal -- the attacker's page must not be
+            # able to read even this error via a CORS-mode fetch.
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_GET(self):
             self._safe_dispatch(self._do_GET)
@@ -254,6 +298,24 @@ def make_handler(
 
             elif path == "/api/auth/callback":
                 # Handle redirect callback from EnneadTabHome with API keys
+                #
+                # 2026-09-18 SECURITY (known gap, not fixed here): this endpoint
+                # trusts any GET carrying a well-formed base64(json) token, with
+                # no signature and no state/nonce binding it to a callback WE
+                # initiated. A page that merely navigates the browser here
+                # (window.location = '.../api/auth/callback?token=<forged>') can
+                # inject its own provider keys and silently capture future chat
+                # traffic sent through that provider. _same_origin() does not
+                # help: this is a legitimate CROSS-origin top-level navigation
+                # BY DESIGN (the redirect comes from enneadtab.com), so an
+                # Origin/Referer check cannot distinguish the real callback from
+                # a forged one -- it would either accept both or break the real
+                # login flow depending on what enneadtab.com's redirect actually
+                # sends, which this repo cannot verify without inspecting the
+                # EnneadTab-Home server that constructs it. A real fix needs a
+                # state/nonce generated here and echoed back by enneadtab.com
+                # (or an HMAC-signed token), coordinated with that repo -- do not
+                # add a local-only check without confirming the round trip.
                 token = query.get("token", [""])[0]
                 if not token:
                     self.send_error(400, "Missing token")
@@ -279,11 +341,21 @@ def make_handler(
 
         def _do_POST(self):
             if self.path == "/api/chat":
+                if not self._same_origin():
+                    self._refuse_cross_origin()
+                    return
                 self._handle_chat()
             else:
                 self.send_error(404)
 
         def do_OPTIONS(self):
+            # Only emit CORS headers for a preflight that actually names our own
+            # origin -- otherwise the browser's preflight fails closed and the
+            # real cross-origin POST to /api/chat is never sent.
+            if not self._same_origin():
+                self.send_response(403)
+                self.end_headers()
+                return
             self.send_response(200)
             self._cors_headers()
             self.end_headers()
@@ -307,6 +379,9 @@ def make_handler(
 
             # Resolve API key: central > manual > none
             prov_info = providers.get(provider, {})
+            # Resolve model: central /api/keys/llm payload > GEMINI_MODEL env
+            # (todo #1452). None = llm_client built-in default.
+            model = prov_info.get("model", "") or os.environ.get("GEMINI_MODEL", "") or None
             api_key = prov_info.get("key", "")
             if not api_key and manual_key:
                 api_key = manual_key
@@ -326,6 +401,8 @@ def make_handler(
             # Try primary provider, auto-fallback to the other on failure
             fallback_provider = "gemini" if provider == "anthropic" else "anthropic"
             fallback_info = providers.get(fallback_provider, {})
+            fallback_model = (fallback_info.get("model", "")
+                              or os.environ.get("GEMINI_MODEL", "") or None)
             fallback_key = fallback_info.get("key", "")
 
             try:
@@ -335,6 +412,7 @@ def make_handler(
                     messages=messages,
                     mcp_tools=mcp_tools,
                     execute_fn=execute,
+                    model=model,
                 )
                 result["provider_used"] = provider
                 body = json.dumps(result).encode()
@@ -349,6 +427,7 @@ def make_handler(
                             messages=messages,
                             mcp_tools=mcp_tools,
                             execute_fn=execute,
+                            model=fallback_model,
                         )
                         result["provider_used"] = fallback_provider
                         result["fallback_reason"] = str(primary_err)[:200]
@@ -379,7 +458,13 @@ def make_handler(
             self.wfile.write(body)
 
         def _cors_headers(self):
-            self.send_header("Access-Control-Allow-Origin", "*")
+            # Reflect ONLY our own origin, never "*" -- a wildcard lets any
+            # website's JS read the response of a CORS-mode fetch (e.g. the
+            # /api/health provider list) even where the request itself was
+            # otherwise allowed through.
+            origin = self.headers.get("Origin")
+            if origin in allowed_origins:
+                self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
