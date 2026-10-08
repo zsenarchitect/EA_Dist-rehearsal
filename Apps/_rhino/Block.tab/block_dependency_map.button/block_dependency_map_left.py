@@ -1,5 +1,5 @@
 __title__ = "BlockDependencyMap"
-__doc__ = """Report per-definition instance counts, embedded vs linked status, and the recursive nesting tree with max depth for every block definition in the document.
+__doc__ = """Report per-block instance counts, linked status, and the recursive nesting tree depth.
 
 Helps answer "what uses this block?" and "how deep does this nesting go?" before editing or exploding a definition.
 """
